@@ -1,0 +1,13 @@
+discord.py
+fuzzywuzzy
+python-Levenshtein
+requests
+psycopg2
+python-dotenv
+deepl
+pytz
+bs4
+selenium==4.5.0
+lxml
+asyncpg
+playwright
