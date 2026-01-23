@@ -359,7 +359,7 @@ class ToggleTrackers(commands.Cog):
                 entries.append((r["world"], r["tribe_tag"]))
         return entries
 
-    async def _od_enable(self, guild_id: int, channel_id: int, world: str, tribe_tag: str) -> None:
+    async def _od_enable(self, guild_id: int, channel_id: int, world: str, tribe_tag: str, min_threshold: int) -> None:
         od_cog = self._get_tracker_cog("od")
 
         exists_cfg = await self.db.fetchval(
@@ -382,11 +382,11 @@ class ToggleTrackers(commands.Cog):
             INSERT INTO odtracker_enabled_tribes_v2 (
                 guild_id, channel_id, world, tribe_tag, min_threshold
             )
-            VALUES ($1, $2, $3, $4, 0)
+            VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (guild_id, channel_id, world, tribe_tag) DO UPDATE
             SET min_threshold = EXCLUDED.min_threshold;
             """,
-            guild_id, channel_id, world, tribe_tag
+            guild_id, channel_id, world, tribe_tag, int(min_threshold)
         )
 
         if od_cog is not None:
@@ -987,7 +987,45 @@ class ConquerCancelButton(discord.ui.Button):
         await interaction.response.edit_message(embed=embed, view=end_view)
 
 
-# ---------------------- OD tribe dropdown (with search) ---------------------- #
+# ---------------------- OD tribe dropdown (with search + min_threshold) ---------------------- #
+
+class ODMinThresholdModal(discord.ui.Modal):
+    def __init__(self, parent_view: "ODTribeSelectView", message_id: int, world: str, tribe_tag: str):
+        super().__init__(title="OD instellingen")
+        self.parent_view = parent_view
+        self.message_id = message_id
+        self.world = world
+        self.tribe_tag = tribe_tag
+
+        self.min_threshold = discord.ui.TextInput(
+            label="Minimale OD stijging",
+            placeholder="0",
+            required=True,
+            max_length=20
+        )
+        self.add_item(self.min_threshold)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw = str(self.min_threshold.value or "").strip()
+
+        try:
+            value = int(raw)
+        except ValueError:
+            await interaction.response.send_message("Ongeldige waarde. Vul een geheel getal in, bijvoorbeeld 0.", ephemeral=True)
+            return
+
+        if value < 0:
+            await interaction.response.send_message("Ongeldige waarde. Minimum threshold kan niet negatief zijn.", ephemeral=True)
+            return
+
+        await self.parent_view.enable_with_threshold(
+            interaction=interaction,
+            message_id=self.message_id,
+            world=self.world,
+            tribe_tag=self.tribe_tag,
+            min_threshold=value
+        )
+
 
 class ODTribeSearchModal(discord.ui.Modal):
     def __init__(self, parent_view: "ODTribeSelectView"):
@@ -1089,14 +1127,51 @@ class ODTribeSelectView(BaseView):
             await interaction.response.edit_message(embed=embed, view=end_view)
             return
 
-        await self.cog._od_enable(guild_id, channel_id, self.world, tag_value)
+        message_id = interaction.message.id if interaction.message else None
+        if message_id is None:
+            await interaction.response.send_message("Er ging iets mis. Probeer opnieuw.", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(
+            ODMinThresholdModal(
+                parent_view=self,
+                message_id=message_id,
+                world=self.world,
+                tribe_tag=tag_value
+            )
+        )
+
+    async def enable_with_threshold(
+        self,
+        interaction: discord.Interaction,
+        message_id: int,
+        world: str,
+        tribe_tag: str,
+        min_threshold: int
+    ) -> None:
+        guild_id = interaction.guild_id
+        channel_id = interaction.channel_id
+        if guild_id is None or channel_id is None:
+            await interaction.response.send_message("Deze actie kan alleen in een serverkanaal gebruikt worden.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        await self.cog._od_enable(guild_id, channel_id, world, tribe_tag, min_threshold)
 
         embed = create_embed(
             title="Tracker aanpassen",
-            description=f"OD-tracker succesvol aangezet voor stam `{tag_value}` op wereld `{self.world.upper()}` in dit kanaal."
+            description=(
+                f"OD-tracker succesvol aangezet voor stam `{tribe_tag}` op wereld `{world.upper()}` in dit kanaal.\n"
+                f"Minimum threshold: `{min_threshold}`"
+            )
         )
         end_view = EndView(cog=self.cog, user_id=interaction.user.id)
-        await interaction.response.edit_message(embed=embed, view=end_view)
+
+        try:
+            await interaction.followup.edit_message(message_id=message_id, embed=embed, view=end_view)
+        except Exception:
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 class ODSearchButton(discord.ui.Button):
