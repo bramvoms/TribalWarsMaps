@@ -76,7 +76,7 @@ class AcademyTracker(commands.Cog):
             try:
                 villages = await self.db.fetch("""
                     SELECT village_id, name, x, y, player_id, points
-                    FROM village_data
+                    FROM village_data_v3
                     WHERE world = $1;
                 """, world)
 
@@ -147,7 +147,7 @@ class AcademyTracker(commands.Cog):
     async def get_player_name(self, world: str, player_id: int) -> str:
         result = await self.db.fetchrow("""
             SELECT name
-            FROM player_data
+            FROM player_data_v3
             WHERE world = $1 AND player_id = $2;
         """, world, player_id)
 
