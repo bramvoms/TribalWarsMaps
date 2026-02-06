@@ -64,7 +64,7 @@ class WallTracker(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def wall_tracking(self) -> None:
-        """Task to scan the village_data table for wall breakdowns."""
+        """Task to scan the village_data_v3 table for wall breakdowns."""
         if not self.tracked_worlds:
             rows = await self.db.fetch("SELECT DISTINCT world FROM walltracker_channels_maps_v2;")
             self.tracked_worlds = {row["world"] for row in rows}
@@ -75,7 +75,7 @@ class WallTracker(commands.Cog):
             try:
                 villages = await self.db.fetch("""
                     SELECT village_id, name, x, y, player_id, points
-                    FROM village_data
+                    FROM village_data_v3
                     WHERE world = $1;
                 """, world)
 
@@ -140,7 +140,7 @@ class WallTracker(commands.Cog):
         """Fetch the player name for a given player ID."""
         result = await self.db.fetchrow("""
             SELECT name
-            FROM player_data
+            FROM player_data_v3
             WHERE world = $1 AND player_id = $2;
         """, world, player_id)
         return self.decode_url(result["name"]) if result and result["name"] else "Onbekend"
