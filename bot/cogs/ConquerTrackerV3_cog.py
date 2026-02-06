@@ -76,6 +76,19 @@ class ConquerTrackerV3(commands.Cog):
             WHERE world = $1 AND tag = $2;
         """, world, tribe_tag)
 
+    @commands.command(name="conquertrackerv3")
+    @commands.is_owner()
+    async def conquertrackerv3(self, ctx: commands.Context, world: str, tribe_tag: str):
+        world = world.strip().lower()
+        tribe_tag = tribe_tag.strip()
+    
+        await self.toggle_tracking(
+            guild_id=ctx.guild.id,
+            channel_id=ctx.channel.id,
+            world=world,
+            tribe_tag=tribe_tag
+        )
+
     async def toggle_tracking(self, guild_id: int, channel_id: int, world: str, tribe_tag: str):
         tribe_data = await self.get_tribe_id(world, tribe_tag)
         channel = self.bot.get_channel(channel_id)
