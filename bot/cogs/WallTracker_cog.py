@@ -62,7 +62,7 @@ class WallTracker(commands.Cog):
 
         self.loop_initialized = True
 
-    @tasks.loop(minutes=1)
+    @tasks.loop(minutes=5)
     async def wall_tracking(self) -> None:
         """Task to scan the village_data_v3 table for wall breakdowns."""
         if not self.tracked_worlds:
