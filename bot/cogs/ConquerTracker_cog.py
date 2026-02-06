@@ -77,7 +77,7 @@ class ConquerTracker(commands.Cog):
     async def get_tribe_id(self, world: str, tribe_tag: str):
         return await self.bot.db.fetchrow("""
             SELECT tribe_id, tag
-            FROM ally_data
+            FROM ally_data_v3
             WHERE world = $1 AND tag = $2;
         """, world, tribe_tag)
 
@@ -233,7 +233,7 @@ class ConquerTracker(commands.Cog):
 
                     players = await self.bot.db.fetch("""
                         SELECT player_id, tribe_id
-                        FROM player_data
+                        FROM player_data_v3
                         WHERE world = $1 AND player_id = ANY($2::BIGINT[]);
                     """, world, [new_owner_id, old_owner_id])
 
@@ -285,13 +285,13 @@ class ConquerTracker(commands.Cog):
 
         players = await self.bot.db.fetch("""
             SELECT player_id, tribe_id
-            FROM player_data
+            FROM player_data_v3
             WHERE world = $1 AND player_id = ANY($2::BIGINT[]);
         """, world, [new_owner_id, old_owner_id])
 
         village = await self.bot.db.fetchrow("""
             SELECT points
-            FROM village_data
+            FROM village_data_v3
             WHERE world = $1 AND village_id = $2;
         """, world, village_id)
         if not village:
@@ -337,7 +337,7 @@ class ConquerTracker(commands.Cog):
 
         tribes = await self.bot.db.fetch("""
             SELECT tribe_id, tag
-            FROM ally_data
+            FROM ally_data_v3
             WHERE world = $1 AND tribe_id = ANY($2::BIGINT[]);
         """, world, [new_owner_tribe_id, old_owner_tribe_id])
 
@@ -346,13 +346,13 @@ class ConquerTracker(commands.Cog):
 
         players = await self.bot.db.fetch("""
             SELECT player_id, name
-            FROM player_data
+            FROM player_data_v3
             WHERE world = $1 AND player_id = ANY($2::BIGINT[]);
         """, world, [new_owner_id, old_owner_id])
 
         village = await self.bot.db.fetchrow("""
             SELECT name, x, y, points
-            FROM village_data
+            FROM village_data_v3
             WHERE world = $1 AND village_id = $2;
         """, world, village_id)
         if not village:
