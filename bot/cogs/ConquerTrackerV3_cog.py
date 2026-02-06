@@ -146,7 +146,8 @@ class ConquerTrackerV3(commands.Cog):
             VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM NOW())::BIGINT);
         """, guild_id, channel_id, world, tribe_id)
 
-        await self._ensure_baseline_from_village_data(world)
+        if not await self._world_has_baseline(world):
+            await self._ensure_baseline_from_village_data(world)
 
         if channel:
             await channel.send(
@@ -228,22 +229,20 @@ class ConquerTrackerV3(commands.Cog):
     @tasks.loop(seconds=30)
     async def check_conquers(self):
         logger.info("[ConquerTrackerV3] tick")
-    
+
         if not self.bot.is_ready():
             logger.info("[ConquerTrackerV3] bot not ready")
             return
-    
-        tracking_data = await self.bot.db.fetch(
-            "SELECT * FROM conquer_settings_v3;"
-        )
+
+        tracking_data = await self.db.fetch("SELECT * FROM conquer_settings_v3;")
         logger.info("[ConquerTrackerV3] settings rows=%s", len(tracking_data))
-    
+
         if not tracking_data:
             return
-    
+
         worlds = sorted({row["world"] for row in tracking_data})
         logger.info("[ConquerTrackerV3] worlds=%s", worlds)
-    
+
         for world in worlds:
             try:
                 current = await self._fetch_current_villages_world(world)
@@ -252,17 +251,17 @@ class ConquerTrackerV3(commands.Cog):
                     world.upper(),
                     len(current),
                 )
-    
+
                 if not current:
                     continue
-    
+
                 baseline_exists = await self._world_has_baseline(world)
                 logger.info(
                     "[ConquerTrackerV3 %s] baseline_exists=%s",
                     world.upper(),
                     baseline_exists,
                 )
-    
+
                 if not baseline_exists:
                     await self._ensure_baseline_from_village_data(world)
                     logger.info(
@@ -270,7 +269,7 @@ class ConquerTrackerV3(commands.Cog):
                         world.upper(),
                     )
                     continue
-    
+
                 t0 = datetime.utcnow()
                 lastowners = await self._load_lastowners_for_world(world)
                 logger.info(
@@ -279,10 +278,10 @@ class ConquerTrackerV3(commands.Cog):
                     len(lastowners),
                     (datetime.utcnow() - t0).total_seconds(),
                 )
-    
+
                 now_ts = int(datetime.utcnow().timestamp())
-    
-                tracking_channels = await self.bot.db.fetch(
+
+                tracking_channels = await self.db.fetch(
                     """
                     SELECT guild_id, channel_id, tribe_id
                     FROM conquer_settings_v3
@@ -290,29 +289,29 @@ class ConquerTrackerV3(commands.Cog):
                     """,
                     world,
                 )
-    
+
                 changed_lastowners: Dict[int, Tuple[int, int]] = {}
-    
+
                 for village_id, cur in current.items():
                     new_owner_id = int(cur["player_id"])
                     new_owner_tribe_id = int(cur["tribe_id"])
                     points = int(cur["points"])
-    
+
                     prev = lastowners.get(village_id)
                     if not prev:
                         changed_lastowners[village_id] = (new_owner_id, new_owner_tribe_id)
                         continue
-    
+
                     old_owner_id, old_owner_tribe_id = prev
-    
+
                     if new_owner_id == old_owner_id and new_owner_tribe_id == old_owner_tribe_id:
                         continue
-    
+
                     changed_lastowners[village_id] = (new_owner_id, new_owner_tribe_id)
-    
+
                     if new_owner_id == old_owner_id:
                         continue
-    
+
                     stored = await self.store_conquer(
                         world=world,
                         village_id=village_id,
@@ -325,13 +324,13 @@ class ConquerTrackerV3(commands.Cog):
                     )
                     if not stored:
                         continue
-    
+
                     relevant_channels = [
                         t
                         for t in tracking_channels
                         if int(t["tribe_id"]) in (new_owner_tribe_id, old_owner_tribe_id)
                     ]
-    
+
                     for tracking in relevant_channels:
                         await self.process_conquer(
                             guild_id=int(tracking["guild_id"]),
@@ -343,7 +342,7 @@ class ConquerTrackerV3(commands.Cog):
                             new_owner_id=new_owner_id,
                             old_owner_id=old_owner_id,
                         )
-    
+
                 t1 = datetime.utcnow()
                 if changed_lastowners:
                     await self._upsert_lastowners_for_world(world, changed_lastowners)
@@ -355,15 +354,15 @@ class ConquerTrackerV3(commands.Cog):
                     )
                 else:
                     logger.info("[ConquerTrackerV3 %s] lastowners updated (0 villages)", world.upper())
-    
+
                 logger.info("[ConquerTrackerV3 %s] scan completed", world.upper())
-    
+
             except Exception:
                 logger.exception(
                     "[ConquerTrackerV3 %s] error during scan",
                     world.upper(),
                 )
-            
+
     @check_conquers.before_loop
     async def before_check_conquers(self):
         await self.bot.wait_until_ready()
