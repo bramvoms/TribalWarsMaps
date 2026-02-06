@@ -4,6 +4,10 @@ from discord.ext import commands, tasks
 from typing import Dict, Tuple, Optional
 from datetime import datetime
 import pytz
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class ConquerTrackerV3(commands.Cog):
@@ -62,19 +66,28 @@ class ConquerTrackerV3(commands.Cog):
 
     async def cog_load(self):
         await self.create_tables()
+        logger.info("[ConquerTrackerV3] Loaded")
 
     async def cog_unload(self):
         if self.check_conquers.is_running():
             self.check_conquers.cancel()
+        logger.info("[ConquerTrackerV3] Unloaded")
 
     @commands.Cog.listener()
     async def on_ready(self):
         if self.loop_initialized:
             return
 
-        rows = await self.bot.db.fetch("SELECT 1 FROM conquer_settings_v3 LIMIT 1;")
-        if rows and not self.check_conquers.is_running():
-            self.check_conquers.start()
+        try:
+            rows = await self.bot.db.fetch("SELECT 1 FROM conquer_settings_v3 LIMIT 1;")
+            if rows:
+                if not self.check_conquers.is_running():
+                    self.check_conquers.start()
+                    logger.info("[ConquerTrackerV3] Background check_conquers loop started via on_ready.")
+            else:
+                logger.info("[ConquerTrackerV3] No settings found, loop not started via on_ready.")
+        except Exception as e:
+            logger.exception(f"[ConquerTrackerV3] on_ready error: {e}")
 
         self.loop_initialized = True
 
@@ -131,6 +144,7 @@ class ConquerTrackerV3(commands.Cog):
             any_left = await self.bot.db.fetchval("SELECT 1 FROM conquer_settings_v3;")
             if not any_left and self.check_conquers.is_running():
                 self.check_conquers.cancel()
+                logger.info("[ConquerTrackerV3] Loop stopped because no settings left.")
 
             return False
 
@@ -146,8 +160,9 @@ class ConquerTrackerV3(commands.Cog):
 
         await self._ensure_baseline_for_world(world)
 
-        if self.bot.is_ready() and not self.check_conquers.is_running():
+        if not self.check_conquers.is_running():
             self.check_conquers.start()
+            logger.info("[ConquerTrackerV3] Background check_conquers loop started via toggle_tracking.")
 
         return True
 
@@ -161,12 +176,12 @@ class ConquerTrackerV3(commands.Cog):
         return bool(exists)
 
     async def _ensure_baseline_for_world(self, world: str):
-        baseline_exists = await self._world_has_baseline(world)
-        if baseline_exists:
+        if await self._world_has_baseline(world):
             return
 
         current = await self._fetch_current_villages_world(world)
         if not current:
+            logger.info(f"[ConquerTrackerV3 {world.upper()}] No village_data_v3 rows yet, baseline not set.")
             return
 
         lastowners_update: Dict[int, Tuple[int, int]] = {}
@@ -174,7 +189,7 @@ class ConquerTrackerV3(commands.Cog):
             lastowners_update[village_id] = (int(cur["player_id"]), int(cur["tribe_id"]))
 
         await self._upsert_lastowners_for_world(world, lastowners_update)
-        print(f"[ConquerTrackerV3 {world.upper()}] Baseline gezet vanuit village_data_v3.")
+        logger.info(f"[ConquerTrackerV3 {world.upper()}] Baseline set from village_data_v3 with {len(lastowners_update)} villages.")
 
     async def _load_lastowners_for_world(self, world: str) -> Dict[int, Tuple[int, int]]:
         rows = await self.bot.db.fetch("""
@@ -235,13 +250,8 @@ class ConquerTrackerV3(commands.Cog):
                 if not current:
                     continue
 
-                baseline_exists = await self._world_has_baseline(world)
-                if not baseline_exists:
-                    lastowners_update: Dict[int, Tuple[int, int]] = {}
-                    for village_id, cur in current.items():
-                        lastowners_update[village_id] = (int(cur["player_id"]), int(cur["tribe_id"]))
-                    await self._upsert_lastowners_for_world(world, lastowners_update)
-                    print(f"[ConquerTrackerV3 {world.upper()}] Baseline gezet vanuit village_data_v3.")
+                if not await self._world_has_baseline(world):
+                    await self._ensure_baseline_for_world(world)
                     continue
 
                 lastowners = await self._load_lastowners_for_world(world)
@@ -308,11 +318,11 @@ class ConquerTrackerV3(commands.Cog):
                 await self._upsert_lastowners_for_world(world, lastowners_update)
 
             except Exception as e:
-                print(f"[ConquerTrackerV3 {world.upper()}] Fout tijdens scan: {e}")
+                logger.exception(f"[ConquerTrackerV3 {world.upper()}] Scan error: {e}")
 
         for world, count in world_conquer_counts.items():
             if count != 0:
-                print(f"[ConquerTrackerV3 {world.upper()}] {count} nieuwe veroveringen gevonden.")
+                logger.info(f"[ConquerTrackerV3 {world.upper()}] {count} new conquers found.")
 
     @check_conquers.before_loop
     async def before_check_conquers(self):
@@ -482,9 +492,7 @@ class ConquerTrackerV3(commands.Cog):
             try:
                 await channel.send(embed=embed)
                 await asyncio.sleep(1)
-            except discord.Forbidden:
-                return
-            except discord.HTTPException:
+            except (discord.Forbidden, discord.HTTPException):
                 return
 
         await self.bot.db.execute("""
