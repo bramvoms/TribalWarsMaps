@@ -116,7 +116,7 @@ class ODTracker(commands.Cog):
                 except Exception as e:
                     logger.exception(f"Error during ODTracker cleanup for {world}: {e}")
 
-    @tasks.loop(minutes=1)
+    @tasks.loop(minutes=5)
     async def scan_od(self):
         rows = await self.db.fetch("SELECT world FROM odtracker_configs_v2")
         for row in rows:
