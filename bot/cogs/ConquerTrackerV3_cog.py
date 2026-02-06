@@ -1,5 +1,4 @@
 import discord
-import asyncpg
 import asyncio
 from discord.ext import commands, tasks
 from typing import Dict, Tuple, Optional
@@ -81,7 +80,7 @@ class ConquerTrackerV3(commands.Cog):
     async def conquertrackerv3(self, ctx: commands.Context, world: str, tribe_tag: str):
         world = world.strip().lower()
         tribe_tag = tribe_tag.strip()
-    
+
         await self.toggle_tracking(
             guild_id=ctx.guild.id,
             channel_id=ctx.channel.id,
@@ -135,10 +134,28 @@ class ConquerTrackerV3(commands.Cog):
                 f"Tracken van veroveringen voor stam `{exact_tag}` op `{world}` aangezet."
             )
 
+        await self._ensure_baseline_for_world(world)
+
         if not self.check_conquers.is_running():
             self.check_conquers.start()
 
         return True
+
+    async def _ensure_baseline_for_world(self, world: str):
+        baseline_exists = await self._world_has_baseline(world)
+        if baseline_exists:
+            return
+
+        current = await self._fetch_current_villages_world(world)
+        if not current:
+            return
+
+        lastowners_update: Dict[int, Tuple[int, int]] = {}
+        for village_id, cur in current.items():
+            lastowners_update[village_id] = (int(cur["player_id"]), int(cur["tribe_id"]))
+
+        await self._upsert_lastowners_for_world(world, lastowners_update)
+        print(f"[ConquerTrackerV3 {world.upper()}] Baseline gezet vanuit village_data_v3.")
 
     async def _world_has_baseline(self, world: str) -> bool:
         exists = await self.bot.db.fetchval("""
@@ -289,6 +306,10 @@ class ConquerTrackerV3(commands.Cog):
                 print(f"[ConquerTrackerV3 {world.upper()}] 0 nieuwe veroveringen gevonden.")
             else:
                 print(f"[ConquerTrackerV3 {world.upper()}] {count} nieuwe veroveringen gevonden.")
+
+    @check_conquers.before_loop
+    async def before_check_conquers(self):
+        await self.bot.wait_until_ready()
 
     async def store_conquer(
         self,
