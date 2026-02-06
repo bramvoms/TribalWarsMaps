@@ -64,7 +64,7 @@ class AcademyTracker(commands.Cog):
 
         self.loop_initialized = True
 
-    @tasks.loop(minutes=1)
+    @tasks.loop(minutes=5)
     async def academy_tracking(self) -> None:
         if not self.tracked_worlds:
             rows = await self.db.fetch("SELECT DISTINCT world FROM academytracker_channels_v2;")
