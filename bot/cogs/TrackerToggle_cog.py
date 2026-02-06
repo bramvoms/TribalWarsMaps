@@ -198,7 +198,7 @@ class ToggleTrackers(commands.Cog):
 
     async def _conquer_world_is_enabled(self, world: str) -> bool:
         exists_world = await self.db.fetchval(
-            "SELECT 1 FROM ally_data WHERE world = $1 LIMIT 1;",
+            "SELECT 1 FROM ally_data_v3 WHERE world = $1 LIMIT 1;",
             world
         )
         return bool(exists_world)
@@ -208,7 +208,7 @@ class ToggleTrackers(commands.Cog):
             """
             SELECT c.world, c.tribe_id, a.tag
             FROM conquer_settings_v2 c
-            JOIN ally_data a
+            JOIN ally_data_v3 a
               ON a.world = c.world
              AND a.tribe_id = c.tribe_id
             WHERE c.guild_id = $1 AND c.channel_id = $2
@@ -228,7 +228,7 @@ class ToggleTrackers(commands.Cog):
             rows = await self.db.fetch(
                 """
                 SELECT DISTINCT tribe_id, tag
-                FROM ally_data
+                FROM ally_data_v3
                 WHERE world = $1 AND tag ILIKE $2
                 ORDER BY tag
                 LIMIT 25;
@@ -239,7 +239,7 @@ class ToggleTrackers(commands.Cog):
             rows = await self.db.fetch(
                 """
                 SELECT DISTINCT tribe_id, tag
-                FROM ally_data
+                FROM ally_data_v3
                 WHERE world = $1
                 ORDER BY tag
                 LIMIT 25;
@@ -309,7 +309,7 @@ class ToggleTrackers(commands.Cog):
             rows = await self.db.fetch(
                 """
                 SELECT DISTINCT tag
-                FROM ally_data
+                FROM ally_data_v3
                 WHERE world = $1 AND tag ILIKE $2
                 ORDER BY tag
                 LIMIT 25;
@@ -320,7 +320,7 @@ class ToggleTrackers(commands.Cog):
             rows = await self.db.fetch(
                 """
                 SELECT DISTINCT tag
-                FROM ally_data
+                FROM ally_data_v3
                 WHERE world = $1
                 ORDER BY tag
                 LIMIT 25;
@@ -935,7 +935,7 @@ class ConquerTribeSelectView(BaseView):
         tag = await self.cog.db.fetchval(
             """
             SELECT tag
-            FROM ally_data
+            FROM ally_data_v3
             WHERE world = $1 AND tribe_id = $2
             LIMIT 1;
             """,
