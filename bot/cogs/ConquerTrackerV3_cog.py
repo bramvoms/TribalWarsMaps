@@ -9,6 +9,7 @@ import pytz
 class ConquerTrackerV3(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.loop_initialized: bool = False
 
     async def create_tables(self):
         await self.bot.db.execute("""
@@ -61,12 +62,21 @@ class ConquerTrackerV3(commands.Cog):
 
     async def cog_load(self):
         await self.create_tables()
-        if not self.check_conquers.is_running():
-            self.check_conquers.start()
 
     async def cog_unload(self):
         if self.check_conquers.is_running():
             self.check_conquers.cancel()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if self.loop_initialized:
+            return
+
+        rows = await self.bot.db.fetch("SELECT 1 FROM conquer_settings_v3 LIMIT 1;")
+        if rows and not self.check_conquers.is_running():
+            self.check_conquers.start()
+
+        self.loop_initialized = True
 
     async def get_tribe_id(self, world: str, tribe_tag: str):
         return await self.bot.db.fetchrow("""
@@ -136,10 +146,19 @@ class ConquerTrackerV3(commands.Cog):
 
         await self._ensure_baseline_for_world(world)
 
-        if not self.check_conquers.is_running():
+        if self.bot.is_ready() and not self.check_conquers.is_running():
             self.check_conquers.start()
 
         return True
+
+    async def _world_has_baseline(self, world: str) -> bool:
+        exists = await self.bot.db.fetchval("""
+            SELECT 1
+            FROM conquer_lastowners_v3
+            WHERE world = $1
+            LIMIT 1;
+        """, world)
+        return bool(exists)
 
     async def _ensure_baseline_for_world(self, world: str):
         baseline_exists = await self._world_has_baseline(world)
@@ -156,15 +175,6 @@ class ConquerTrackerV3(commands.Cog):
 
         await self._upsert_lastowners_for_world(world, lastowners_update)
         print(f"[ConquerTrackerV3 {world.upper()}] Baseline gezet vanuit village_data_v3.")
-
-    async def _world_has_baseline(self, world: str) -> bool:
-        exists = await self.bot.db.fetchval("""
-            SELECT 1
-            FROM conquer_lastowners_v3
-            WHERE world = $1
-            LIMIT 1;
-        """, world)
-        return bool(exists)
 
     async def _load_lastowners_for_world(self, world: str) -> Dict[int, Tuple[int, int]]:
         rows = await self.bot.db.fetch("""
@@ -207,14 +217,13 @@ class ConquerTrackerV3(commands.Cog):
             }
         return out
 
-    @tasks.loop(minutes=1)
+    @tasks.loop(seconds=10)
     async def check_conquers(self):
         if not self.bot.is_ready():
             return
 
         tracking_data = await self.bot.db.fetch("SELECT * FROM conquer_settings_v3;")
         if not tracking_data:
-            print("[ConquerTrackerV3] Geen ingeschakelde stammen gevonden. Loop draait wel.")
             return
 
         worlds = sorted({entry["world"] for entry in tracking_data})
@@ -302,9 +311,7 @@ class ConquerTrackerV3(commands.Cog):
                 print(f"[ConquerTrackerV3 {world.upper()}] Fout tijdens scan: {e}")
 
         for world, count in world_conquer_counts.items():
-            if count == 0:
-                print(f"[ConquerTrackerV3 {world.upper()}] 0 nieuwe veroveringen gevonden.")
-            else:
+            if count != 0:
                 print(f"[ConquerTrackerV3 {world.upper()}] {count} nieuwe veroveringen gevonden.")
 
     @check_conquers.before_loop
@@ -491,6 +498,4 @@ class ConquerTrackerV3(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    cog = ConquerTrackerV3(bot)
-    await cog.create_tables()
-    await bot.add_cog(cog)
+    await bot.add_cog(ConquerTrackerV3(bot))
