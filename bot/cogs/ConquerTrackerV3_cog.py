@@ -228,39 +228,26 @@ class ConquerTrackerV3(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def check_conquers(self):
-        logger.info("[ConquerTrackerV3] tick")
 
         if not self.bot.is_ready():
             logger.info("[ConquerTrackerV3] bot not ready")
             return
 
         tracking_data = await self.db.fetch("SELECT * FROM conquer_settings_v3;")
-        logger.info("[ConquerTrackerV3] settings rows=%s", len(tracking_data))
 
         if not tracking_data:
             return
 
         worlds = sorted({row["world"] for row in tracking_data})
-        logger.info("[ConquerTrackerV3] worlds=%s", worlds)
 
         for world in worlds:
             try:
                 current = await self._fetch_current_villages_world(world)
-                logger.info(
-                    "[ConquerTrackerV3 %s] current villages=%s",
-                    world.upper(),
-                    len(current),
-                )
 
                 if not current:
                     continue
 
                 baseline_exists = await self._world_has_baseline(world)
-                logger.info(
-                    "[ConquerTrackerV3 %s] baseline_exists=%s",
-                    world.upper(),
-                    baseline_exists,
-                )
 
                 if not baseline_exists:
                     await self._ensure_baseline_from_village_data(world)
@@ -272,12 +259,6 @@ class ConquerTrackerV3(commands.Cog):
 
                 t0 = datetime.utcnow()
                 lastowners = await self._load_lastowners_for_world(world)
-                logger.info(
-                    "[ConquerTrackerV3 %s] loaded lastowners=%s in %.2fs",
-                    world.upper(),
-                    len(lastowners),
-                    (datetime.utcnow() - t0).total_seconds(),
-                )
 
                 now_ts = int(datetime.utcnow().timestamp())
 
@@ -354,8 +335,6 @@ class ConquerTrackerV3(commands.Cog):
                     )
                 else:
                     logger.info("[ConquerTrackerV3 %s] lastowners updated (0 villages)", world.upper())
-
-                logger.info("[ConquerTrackerV3 %s] scan completed", world.upper())
 
             except Exception:
                 logger.exception(
