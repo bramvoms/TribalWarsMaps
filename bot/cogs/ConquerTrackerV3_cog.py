@@ -1,4 +1,5 @@
 import discord
+import asyncpg
 import asyncio
 from discord.ext import commands, tasks
 from typing import Dict, Tuple, Optional
@@ -6,17 +7,18 @@ from datetime import datetime
 import pytz
 import logging
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 class ConquerTrackerV3(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.db: asyncpg.Pool = self.bot.db
         self.loop_initialized: bool = False
 
     async def create_tables(self):
-        await self.bot.db.execute("""
+        await self.db.execute("""
             CREATE TABLE IF NOT EXISTS conquer_settings_v3 (
                 guild_id BIGINT NOT NULL,
                 channel_id BIGINT NOT NULL,
@@ -27,7 +29,7 @@ class ConquerTrackerV3(commands.Cog):
             );
         """)
 
-        await self.bot.db.execute("""
+        await self.db.execute("""
             CREATE TABLE IF NOT EXISTS conquer_data_v3 (
                 world TEXT NOT NULL,
                 village_id BIGINT NOT NULL,
@@ -41,7 +43,7 @@ class ConquerTrackerV3(commands.Cog):
             );
         """)
 
-        await self.bot.db.execute("""
+        await self.db.execute("""
             CREATE TABLE IF NOT EXISTS conquer_messages_v3 (
                 guild_id BIGINT NOT NULL,
                 channel_id BIGINT NOT NULL,
@@ -54,7 +56,7 @@ class ConquerTrackerV3(commands.Cog):
             );
         """)
 
-        await self.bot.db.execute("""
+        await self.db.execute("""
             CREATE TABLE IF NOT EXISTS conquer_lastowners_v3 (
                 world TEXT NOT NULL,
                 village_id BIGINT NOT NULL,
@@ -66,33 +68,25 @@ class ConquerTrackerV3(commands.Cog):
 
     async def cog_load(self):
         await self.create_tables()
-        logger.info("[ConquerTrackerV3] Loaded")
 
     async def cog_unload(self):
         if self.check_conquers.is_running():
             self.check_conquers.cancel()
-        logger.info("[ConquerTrackerV3] Unloaded")
 
     @commands.Cog.listener()
     async def on_ready(self):
         if self.loop_initialized:
             return
 
-        try:
-            rows = await self.bot.db.fetch("SELECT 1 FROM conquer_settings_v3 LIMIT 1;")
-            if rows:
-                if not self.check_conquers.is_running():
-                    self.check_conquers.start()
-                    logger.info("[ConquerTrackerV3] Background check_conquers loop started via on_ready.")
-            else:
-                logger.info("[ConquerTrackerV3] No settings found, loop not started via on_ready.")
-        except Exception as e:
-            logger.exception(f"[ConquerTrackerV3] on_ready error: {e}")
+        rows = await self.db.fetch("SELECT 1 FROM conquer_settings_v3 LIMIT 1;")
+        if rows and not self.check_conquers.is_running():
+            self.check_conquers.start()
+            logger.info("[ConquerTrackerV3] Background check_conquers loop started via on_ready.")
 
         self.loop_initialized = True
 
     async def get_tribe_id(self, world: str, tribe_tag: str):
-        return await self.bot.db.fetchrow("""
+        return await self.db.fetchrow("""
             SELECT tribe_id, tag
             FROM ally_data_v3
             WHERE world = $1 AND tag = $2;
@@ -125,13 +119,13 @@ class ConquerTrackerV3(commands.Cog):
 
         tribe_id, exact_tag = tribe_data
 
-        exists = await self.bot.db.fetchval("""
+        exists = await self.db.fetchval("""
             SELECT 1 FROM conquer_settings_v3
             WHERE guild_id = $1 AND channel_id = $2 AND world = $3 AND tribe_id = $4;
         """, guild_id, channel_id, world, tribe_id)
 
         if exists:
-            await self.bot.db.execute("""
+            await self.db.execute("""
                 DELETE FROM conquer_settings_v3
                 WHERE guild_id = $1 AND channel_id = $2 AND world = $3 AND tribe_id = $4;
             """, guild_id, channel_id, world, tribe_id)
@@ -141,33 +135,32 @@ class ConquerTrackerV3(commands.Cog):
                     f"Tracken van veroveringen voor stam `{exact_tag}` op `{world}` uitgeschakeld."
                 )
 
-            any_left = await self.bot.db.fetchval("SELECT 1 FROM conquer_settings_v3;")
+            any_left = await self.db.fetchval("SELECT 1 FROM conquer_settings_v3;")
             if not any_left and self.check_conquers.is_running():
                 self.check_conquers.cancel()
-                logger.info("[ConquerTrackerV3] Loop stopped because no settings left.")
 
             return False
 
-        await self.bot.db.execute("""
+        await self.db.execute("""
             INSERT INTO conquer_settings_v3 (guild_id, channel_id, world, tribe_id, starting_unix_timestamp)
             VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM NOW())::BIGINT);
         """, guild_id, channel_id, world, tribe_id)
+
+        await self._ensure_baseline_from_village_data(world)
 
         if channel:
             await channel.send(
                 f"Tracken van veroveringen voor stam `{exact_tag}` op `{world}` aangezet."
             )
 
-        await self._ensure_baseline_for_world(world)
-
-        if not self.check_conquers.is_running():
+        if self.bot.is_ready() and not self.check_conquers.is_running():
             self.check_conquers.start()
-            logger.info("[ConquerTrackerV3] Background check_conquers loop started via toggle_tracking.")
+            logger.info("[ConquerTrackerV3] Background check_conquers loop started via toggle.")
 
         return True
 
     async def _world_has_baseline(self, world: str) -> bool:
-        exists = await self.bot.db.fetchval("""
+        exists = await self.db.fetchval("""
             SELECT 1
             FROM conquer_lastowners_v3
             WHERE world = $1
@@ -175,24 +168,21 @@ class ConquerTrackerV3(commands.Cog):
         """, world)
         return bool(exists)
 
-    async def _ensure_baseline_for_world(self, world: str):
-        if await self._world_has_baseline(world):
-            return
-
-        current = await self._fetch_current_villages_world(world)
-        if not current:
-            logger.info(f"[ConquerTrackerV3 {world.upper()}] No village_data_v3 rows yet, baseline not set.")
-            return
-
-        lastowners_update: Dict[int, Tuple[int, int]] = {}
-        for village_id, cur in current.items():
-            lastowners_update[village_id] = (int(cur["player_id"]), int(cur["tribe_id"]))
-
-        await self._upsert_lastowners_for_world(world, lastowners_update)
-        logger.info(f"[ConquerTrackerV3 {world.upper()}] Baseline set from village_data_v3 with {len(lastowners_update)} villages.")
+    async def _ensure_baseline_from_village_data(self, world: str) -> None:
+        async with self.db.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("""
+                    INSERT INTO conquer_lastowners_v3 (world, village_id, player_id, tribe_id)
+                    SELECT world, village_id, player_id, tribe_id
+                    FROM village_data_v3
+                    WHERE world = $1
+                    ON CONFLICT (world, village_id) DO UPDATE
+                    SET player_id = EXCLUDED.player_id,
+                        tribe_id = EXCLUDED.tribe_id;
+                """, world)
 
     async def _load_lastowners_for_world(self, world: str) -> Dict[int, Tuple[int, int]]:
-        rows = await self.bot.db.fetch("""
+        rows = await self.db.fetch("""
             SELECT village_id, player_id, tribe_id
             FROM conquer_lastowners_v3
             WHERE world = $1;
@@ -204,7 +194,10 @@ class ConquerTrackerV3(commands.Cog):
         return out
 
     async def _upsert_lastowners_for_world(self, world: str, current: Dict[int, Tuple[int, int]]):
-        async with self.bot.db.acquire() as conn:
+        if not current:
+            return
+
+        async with self.db.acquire() as conn:
             async with conn.transaction():
                 for vid, (pid, tid) in current.items():
                     await conn.execute("""
@@ -216,7 +209,7 @@ class ConquerTrackerV3(commands.Cog):
                     """, world, vid, pid, tid)
 
     async def _fetch_current_villages_world(self, world: str) -> Dict[int, Dict[str, int]]:
-        rows = await self.bot.db.fetch("""
+        rows = await self.db.fetch("""
             SELECT village_id, player_id, tribe_id, points
             FROM village_data_v3
             WHERE world = $1;
@@ -237,12 +230,11 @@ class ConquerTrackerV3(commands.Cog):
         if not self.bot.is_ready():
             return
 
-        tracking_data = await self.bot.db.fetch("SELECT * FROM conquer_settings_v3;")
+        tracking_data = await self.db.fetch("SELECT * FROM conquer_settings_v3;")
         if not tracking_data:
             return
 
         worlds = sorted({entry["world"] for entry in tracking_data})
-        world_conquer_counts = {w: 0 for w in worlds}
 
         for world in worlds:
             try:
@@ -250,14 +242,15 @@ class ConquerTrackerV3(commands.Cog):
                 if not current:
                     continue
 
-                if not await self._world_has_baseline(world):
-                    await self._ensure_baseline_for_world(world)
+                baseline_exists = await self._world_has_baseline(world)
+                if not baseline_exists:
+                    await self._ensure_baseline_from_village_data(world)
                     continue
 
                 lastowners = await self._load_lastowners_for_world(world)
                 now_ts = int(datetime.utcnow().timestamp())
 
-                tracking_channels = await self.bot.db.fetch("""
+                tracking_channels = await self.db.fetch("""
                     SELECT guild_id, channel_id, tribe_id
                     FROM conquer_settings_v3
                     WHERE world = $1;
@@ -291,8 +284,6 @@ class ConquerTrackerV3(commands.Cog):
                     if not stored:
                         continue
 
-                    world_conquer_counts[world] += 1
-
                     relevant_channels = [
                         t for t in tracking_channels
                         if int(t["tribe_id"]) in (new_owner_tribe_id, old_owner_tribe_id)
@@ -317,12 +308,10 @@ class ConquerTrackerV3(commands.Cog):
                     lastowners_update[village_id] = (int(cur["player_id"]), int(cur["tribe_id"]))
                 await self._upsert_lastowners_for_world(world, lastowners_update)
 
-            except Exception as e:
-                logger.exception(f"[ConquerTrackerV3 {world.upper()}] Scan error: {e}")
+                print(f"[ConquerTrackerV3 {world.upper()}] - Scan completed.")
 
-        for world, count in world_conquer_counts.items():
-            if count != 0:
-                logger.info(f"[ConquerTrackerV3 {world.upper()}] {count} new conquers found.")
+            except Exception as e:
+                logger.exception(f"[ConquerTrackerV3 {world.upper()}] Fout tijdens scan: {e}")
 
     @check_conquers.before_loop
     async def before_check_conquers(self):
@@ -339,7 +328,7 @@ class ConquerTrackerV3(commands.Cog):
         old_owner_tribe_id: Optional[int],
         points: int,
     ):
-        exists = await self.bot.db.fetchval("""
+        exists = await self.db.fetchval("""
             SELECT 1 FROM conquer_data_v3
             WHERE world = $1 AND village_id = $2 AND unix_timestamp = $3
               AND new_owner_id = $4 AND old_owner_id = $5;
@@ -348,7 +337,7 @@ class ConquerTrackerV3(commands.Cog):
         if exists:
             return False
 
-        await self.bot.db.execute("""
+        await self.db.execute("""
             INSERT INTO conquer_data_v3 (
                 world, village_id, unix_timestamp,
                 new_owner_id, new_owner_tribe_id,
@@ -371,7 +360,7 @@ class ConquerTrackerV3(commands.Cog):
         new_owner_id: int,
         old_owner_id: int
     ):
-        conquer = await self.bot.db.fetchrow("""
+        conquer = await self.db.fetchrow("""
             SELECT new_owner_tribe_id, old_owner_tribe_id
             FROM conquer_data_v3
             WHERE world = $1 AND village_id = $2 AND unix_timestamp = $3
@@ -384,7 +373,7 @@ class ConquerTrackerV3(commands.Cog):
         new_owner_tribe_id = conquer["new_owner_tribe_id"]
         old_owner_tribe_id = conquer["old_owner_tribe_id"]
 
-        tribes = await self.bot.db.fetch("""
+        tribes = await self.db.fetch("""
             SELECT tribe_id, tag
             FROM ally_data_v3
             WHERE world = $1 AND tribe_id IN ($2, $3);
@@ -393,13 +382,13 @@ class ConquerTrackerV3(commands.Cog):
         new_owner_tribe_tag = next((t["tag"] for t in tribes if t["tribe_id"] == new_owner_tribe_id), None)
         old_owner_tribe_tag = next((t["tag"] for t in tribes if t["tribe_id"] == old_owner_tribe_id), None)
 
-        players = await self.bot.db.fetch("""
+        players = await self.db.fetch("""
             SELECT player_id, name
             FROM player_data_v3
             WHERE world = $1 AND player_id IN ($2, $3);
         """, world, new_owner_id, old_owner_id)
 
-        village = await self.bot.db.fetchrow("""
+        village = await self.db.fetchrow("""
             SELECT name, x, y, points
             FROM village_data_v3
             WHERE world = $1 AND village_id = $2;
@@ -414,7 +403,7 @@ class ConquerTrackerV3(commands.Cog):
         new_owner_name = new_owner["name"] if new_owner else "Onbekend"
         old_owner_name = old_owner["name"] if old_owner else "Barbarendorp"
 
-        exists = await self.bot.db.fetchval("""
+        exists = await self.db.fetchval("""
             SELECT 1 FROM conquer_messages_v3
             WHERE guild_id = $1 AND channel_id = $2 AND world = $3
               AND village_id = $4 AND unix_timestamp = $5
@@ -492,10 +481,12 @@ class ConquerTrackerV3(commands.Cog):
             try:
                 await channel.send(embed=embed)
                 await asyncio.sleep(1)
-            except (discord.Forbidden, discord.HTTPException):
+            except discord.Forbidden:
+                return
+            except discord.HTTPException:
                 return
 
-        await self.bot.db.execute("""
+        await self.db.execute("""
             INSERT INTO conquer_messages_v3 (
                 guild_id, channel_id, world, village_id,
                 unix_timestamp, old_owner_id, new_owner_id
