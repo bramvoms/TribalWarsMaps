@@ -61,8 +61,10 @@ class ConquerTracker(commands.Cog):
 
     async def cog_load(self):
         await self.create_tables()
+
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=20)
+            self.session = aiohttp.ClientSession(timeout=timeout)
 
         if not self.check_conquers.is_running():
             self.check_conquers.start()
@@ -159,7 +161,6 @@ class ConquerTracker(commands.Cog):
         if row:
             return int(row["last_since"])
 
-        # Fallback: als er nog nooit een timestamp is gezien, gebruik 1 uur geleden
         fallback_since = int(datetime.utcnow().timestamp()) - 3600
 
         await self.bot.db.execute("""
@@ -192,18 +193,26 @@ class ConquerTracker(commands.Cog):
         worlds = sorted({row["world"] for row in tracking_data})
 
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=20)
+            self.session = aiohttp.ClientSession(timeout=timeout)
 
         for world in worlds:
             try:
                 since = await self._get_since_for_world(world)
                 url = f"https://{world}.tribalwars.nl/interface.php?func=get_conquer_extended&since={since}"
 
-                async with self.session.get(url) as response:
-                    if response.status != 200:
-                        print(f"[ConquerTracker {world.upper()}] HTTP {response.status} bij ophalen conquers")
-                        continue
-                    raw_data = await response.text()
+                try:
+                    async with self.session.get(url) as response:
+                        if response.status != 200:
+                            print(f"[ConquerTracker {world.upper()}] HTTP {response.status} bij ophalen conquers")
+                            continue
+                        raw_data = await response.text()
+                except asyncio.TimeoutError:
+                    print(f"[ConquerTracker {world.upper()}] timeout bij ophalen conquers")
+                    continue
+                except aiohttp.ClientError as e:
+                    print(f"[ConquerTracker {world.upper()}] aiohttp fout: {e}")
+                    continue
 
                 conquers = [e.split(",") for e in re.split(r"\s+", raw_data.strip()) if e]
                 if not conquers:
