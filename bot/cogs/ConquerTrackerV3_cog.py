@@ -225,26 +225,37 @@ class ConquerTrackerV3(commands.Cog):
             }
         return out
 
-    @tasks.loop(seconds=10)
+    @tasks.loop(seconds=30)
     async def check_conquers(self):
+        logger.info("[ConquerTrackerV3] tick")
+    
         if not self.bot.is_ready():
+            logger.info("[ConquerTrackerV3] bot not ready")
             return
-
+    
         tracking_data = await self.db.fetch("SELECT * FROM conquer_settings_v3;")
+        logger.info("[ConquerTrackerV3] settings rows=%s", len(tracking_data))
+    
         if not tracking_data:
             return
-
+    
         worlds = sorted({entry["world"] for entry in tracking_data})
-
+        logger.info("[ConquerTrackerV3] worlds=%s", worlds)
+    
         for world in worlds:
             try:
                 current = await self._fetch_current_villages_world(world)
+                logger.info("[ConquerTrackerV3 %s] current villages=%s", world.upper(), len(current))
+    
                 if not current:
                     continue
-
+    
                 baseline_exists = await self._world_has_baseline(world)
+                logger.info("[ConquerTrackerV3 %s] baseline_exists=%s", world.upper(), baseline_exists)
+    
                 if not baseline_exists:
                     await self._ensure_baseline_from_village_data(world)
+                    logger.info("[ConquerTrackerV3 %s] baseline inserted from village_data_v3", world.upper())
                     continue
 
                 lastowners = await self._load_lastowners_for_world(world)
