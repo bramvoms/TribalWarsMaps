@@ -1,5 +1,6 @@
 import discord
 import aiohttp
+import asyncpg
 import asyncio
 from discord.ext import commands, tasks
 from datetime import datetime
@@ -10,7 +11,6 @@ import pytz
 class ConquerTracker(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.loop_initialized: bool = False
         self.session: aiohttp.ClientSession | None = None
 
     async def create_tables(self):
@@ -52,27 +52,27 @@ class ConquerTracker(commands.Cog):
             );
         """)
 
+        await self.bot.db.execute("""
+            CREATE TABLE IF NOT EXISTS conquer_world_state_v2 (
+                world TEXT PRIMARY KEY,
+                last_since BIGINT NOT NULL
+            );
+        """)
+
     async def cog_load(self):
         await self.create_tables()
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession()
 
+        if not self.check_conquers.is_running():
+            self.check_conquers.start()
+
     async def cog_unload(self):
         if self.check_conquers.is_running():
             self.check_conquers.cancel()
+
         if self.session and not self.session.closed:
             await self.session.close()
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        if self.loop_initialized:
-            return
-
-        has_any = await self.bot.db.fetchval("SELECT 1 FROM conquer_settings_v2 LIMIT 1;")
-        if has_any and not self.check_conquers.is_running():
-            self.check_conquers.start()
-
-        self.loop_initialized = True
 
     async def get_tribe_id(self, world: str, tribe_tag: str):
         return await self.bot.db.fetchrow("""
@@ -95,7 +95,8 @@ class ConquerTracker(commands.Cog):
         if not tribe_data:
             if channel:
                 await channel.send(
-                    f"Stammen tag `{tribe_tag}` niet gevonden op wereld `{world}`. Gebruik de exacte tag zoals ingame."
+                    f"Stammen tag `{tribe_tag}` niet gevonden op wereld `{world}`. "
+                    f"Gebruik de exacte tag zoals ingame."
                 )
             return None
 
@@ -124,57 +125,95 @@ class ConquerTracker(commands.Cog):
 
             return False
 
+        now_ts = int(datetime.utcnow().timestamp())
+
         await self.bot.db.execute("""
             INSERT INTO conquer_settings_v2 (guild_id, channel_id, world, tribe_id, starting_unix_timestamp)
-            VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM NOW())::BIGINT);
-        """, guild_id, channel_id, world, tribe_id)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT DO NOTHING;
+        """, guild_id, channel_id, world, tribe_id, now_ts)
+
+        await self.bot.db.execute("""
+            INSERT INTO conquer_world_state_v2 (world, last_since)
+            VALUES ($1, $2)
+            ON CONFLICT (world) DO NOTHING;
+        """, world, now_ts)
 
         if channel:
             await channel.send(
                 f"Tracken van veroveringen voor stam `{exact_tag}` op `{world}` aangezet."
             )
 
-        if self.bot.is_ready() and not self.check_conquers.is_running():
+        if not self.check_conquers.is_running():
             self.check_conquers.start()
 
         return True
+
+    async def _get_since_for_world(self, world: str) -> int:
+        row = await self.bot.db.fetchrow("""
+            SELECT last_since
+            FROM conquer_world_state_v2
+            WHERE world = $1;
+        """, world)
+
+        if row:
+            return int(row["last_since"])
+
+        # Fallback: als er nog nooit een timestamp is gezien, gebruik 1 uur geleden
+        fallback_since = int(datetime.utcnow().timestamp()) - 3600
+
+        await self.bot.db.execute("""
+            INSERT INTO conquer_world_state_v2 (world, last_since)
+            VALUES ($1, $2)
+            ON CONFLICT (world) DO UPDATE SET last_since = EXCLUDED.last_since;
+        """, world, fallback_since)
+
+        return fallback_since
+
+    async def _set_since_for_world(self, world: str, since: int) -> None:
+        await self.bot.db.execute("""
+            INSERT INTO conquer_world_state_v2 (world, last_since)
+            VALUES ($1, $2)
+            ON CONFLICT (world) DO UPDATE SET last_since = EXCLUDED.last_since;
+        """, world, since)
 
     @tasks.loop(minutes=1)
     async def check_conquers(self):
         if not self.bot.is_ready():
             return
 
-        tracking_data = await self.bot.db.fetch("SELECT * FROM conquer_settings_v2;")
+        tracking_data = await self.bot.db.fetch("""
+            SELECT guild_id, channel_id, world, tribe_id
+            FROM conquer_settings_v2;
+        """)
         if not tracking_data:
             return
 
         worlds = sorted({row["world"] for row in tracking_data})
-        world_conquer_counts = {w: 0 for w in worlds}
+
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession()
 
         for world in worlds:
-            unix_timestamp_23_hours_ago = int(datetime.utcnow().timestamp()) - 23 * 3600
-            url = (
-                f"https://{world}.tribalwars.nl/interface.php"
-                f"?func=get_conquer_extended&since={unix_timestamp_23_hours_ago}"
-            )
-
             try:
-                if self.session is None or self.session.closed:
-                    self.session = aiohttp.ClientSession()
+                since = await self._get_since_for_world(world)
+                url = f"https://{world}.tribalwars.nl/interface.php?func=get_conquer_extended&since={since}"
 
                 async with self.session.get(url) as response:
                     if response.status != 200:
+                        print(f"[ConquerTracker {world.upper()}] HTTP {response.status} bij ophalen conquers")
                         continue
                     raw_data = await response.text()
 
                 conquers = [e.split(",") for e in re.split(r"\s+", raw_data.strip()) if e]
+                if not conquers:
+                    print(f"[ConquerTracker {world.upper()}] - 0 new conquers found.")
+                    continue
 
-                tracking_channels = await self.bot.db.fetch("""
-                    SELECT guild_id, channel_id, tribe_id
-                    FROM conquer_settings_v2
-                    WHERE world = $1;
-                """, world)
+                max_ts_seen = since
+                stored_count = 0
 
+                tracking_channels = [t for t in tracking_data if t["world"] == world]
                 if not tracking_channels:
                     continue
 
@@ -183,18 +222,14 @@ class ConquerTracker(commands.Cog):
                         continue
 
                     village_id, unix_timestamp, new_owner_id, old_owner_id = map(int, conquer[:4])
+                    if unix_timestamp > max_ts_seen:
+                        max_ts_seen = unix_timestamp
 
-                    stored = await self.store_conquer(
-                        world=world,
-                        village_id=village_id,
-                        unix_timestamp=unix_timestamp,
-                        new_owner_id=new_owner_id,
-                        old_owner_id=old_owner_id
-                    )
+                    stored = await self.store_conquer(world, village_id, unix_timestamp, new_owner_id, old_owner_id)
                     if not stored:
                         continue
 
-                    world_conquer_counts[world] += 1
+                    stored_count += 1
 
                     players = await self.bot.db.fetch("""
                         SELECT player_id, tribe_id
@@ -205,49 +240,46 @@ class ConquerTracker(commands.Cog):
                     new_owner_tribe_id = next((p["tribe_id"] for p in players if p["player_id"] == new_owner_id), None)
                     old_owner_tribe_id = next((p["tribe_id"] for p in players if p["player_id"] == old_owner_id), None)
 
-                    relevant_channels = [
+                    relevant = [
                         t for t in tracking_channels
-                        if int(t["tribe_id"]) in (
-                            int(new_owner_tribe_id) if new_owner_tribe_id is not None else -1,
-                            int(old_owner_tribe_id) if old_owner_tribe_id is not None else -1
-                        )
+                        if t["tribe_id"] in (new_owner_tribe_id, old_owner_tribe_id)
                     ]
+                    if not relevant:
+                        continue
 
-                    for tracking in relevant_channels:
+                    for t in relevant:
                         await self.process_conquer(
-                            guild_id=int(tracking["guild_id"]),
-                            channel_id=int(tracking["channel_id"]),
+                            guild_id=t["guild_id"],
+                            channel_id=t["channel_id"],
                             world=world,
-                            tracked_tribe_id=int(tracking["tribe_id"]),
+                            tracked_tribe_id=t["tribe_id"],
                             village_id=village_id,
                             unix_timestamp=unix_timestamp,
                             new_owner_id=new_owner_id,
-                            old_owner_id=old_owner_id
+                            old_owner_id=old_owner_id,
                         )
 
-                await asyncio.sleep(0.2)
+                await self._set_since_for_world(world, int(max_ts_seen) + 1)
 
-            except Exception:
-                continue
+                if stored_count == 0:
+                    print(f"[ConquerTracker {world.upper()}] - 0 new conquers found.")
+                else:
+                    print(f"[ConquerTracker {world.upper()}] - {stored_count} new conquers found.")
 
-        for world, count in world_conquer_counts.items():
-            if count == 0:
-                print(f"[ConquerTracker {world.upper()}] 0 new conquers found.")
-            else:
-                print(f"[ConquerTracker {world.upper()}] {count} new conquers found.")
+            except Exception as e:
+                print(f"[ConquerTracker {world.upper()}] scan fout: {e}")
 
     @check_conquers.before_loop
     async def before_check_conquers(self):
         await self.bot.wait_until_ready()
 
-    async def store_conquer(self, world: str, village_id: int, unix_timestamp: int, new_owner_id: int, old_owner_id: int):
+    async def store_conquer(self, world, village_id, unix_timestamp, new_owner_id, old_owner_id):
         exists = await self.bot.db.fetchval("""
             SELECT 1
             FROM conquer_data_v2
             WHERE world = $1 AND village_id = $2 AND unix_timestamp = $3
               AND new_owner_id = $4 AND old_owner_id = $5;
         """, world, village_id, unix_timestamp, new_owner_id, old_owner_id)
-
         if exists:
             return False
 
@@ -262,7 +294,6 @@ class ConquerTracker(commands.Cog):
             FROM village_data
             WHERE world = $1 AND village_id = $2;
         """, world, village_id)
-
         if not village:
             return False
 
@@ -283,34 +314,32 @@ class ConquerTracker(commands.Cog):
 
     async def process_conquer(
         self,
-        guild_id: int,
-        channel_id: int,
-        world: str,
-        tracked_tribe_id: int,
-        village_id: int,
-        unix_timestamp: int,
-        new_owner_id: int,
-        old_owner_id: int
+        guild_id,
+        channel_id,
+        world,
+        tracked_tribe_id,
+        village_id,
+        unix_timestamp,
+        new_owner_id,
+        old_owner_id
     ):
         conquer = await self.bot.db.fetchrow("""
-            SELECT new_owner_tribe_id, old_owner_tribe_id, points
+            SELECT new_owner_tribe_id, old_owner_tribe_id
             FROM conquer_data_v2
             WHERE world = $1 AND village_id = $2 AND unix_timestamp = $3
               AND new_owner_id = $4 AND old_owner_id = $5;
         """, world, village_id, unix_timestamp, new_owner_id, old_owner_id)
-
         if not conquer:
             return
 
         new_owner_tribe_id = conquer["new_owner_tribe_id"]
         old_owner_tribe_id = conquer["old_owner_tribe_id"]
-        points = int(conquer["points"])
 
         tribes = await self.bot.db.fetch("""
             SELECT tribe_id, tag
             FROM ally_data
             WHERE world = $1 AND tribe_id = ANY($2::BIGINT[]);
-        """, world, [new_owner_tribe_id or 0, old_owner_tribe_id or 0])
+        """, world, [new_owner_tribe_id, old_owner_tribe_id])
 
         new_owner_tribe_tag = next((t["tag"] for t in tribes if t["tribe_id"] == new_owner_tribe_id), None)
         old_owner_tribe_tag = next((t["tag"] for t in tribes if t["tribe_id"] == old_owner_tribe_id), None)
@@ -322,11 +351,10 @@ class ConquerTracker(commands.Cog):
         """, world, [new_owner_id, old_owner_id])
 
         village = await self.bot.db.fetchrow("""
-            SELECT name, x, y
+            SELECT name, x, y, points
             FROM village_data
             WHERE world = $1 AND village_id = $2;
         """, world, village_id)
-
         if not village:
             return
 
@@ -343,7 +371,6 @@ class ConquerTracker(commands.Cog):
               AND village_id = $4 AND unix_timestamp = $5
               AND old_owner_id = $6 AND new_owner_id = $7;
         """, guild_id, channel_id, world, village_id, unix_timestamp, old_owner_id, new_owner_id)
-
         if exists:
             return
 
@@ -366,25 +393,23 @@ class ConquerTracker(commands.Cog):
         elif (
             old_owner_tribe_id == tracked_tribe_id
             and new_owner_tribe_id != old_owner_tribe_id
-            and (new_owner_tribe_id or 0) == 0
+            and new_owner_tribe_id == 0
         ):
             description = f"**{old_owner_name}** is een dorp verloren aan **{new_owner_name}**!"
             color = discord.Color.red()
         elif (
             old_owner_tribe_id == tracked_tribe_id
             and new_owner_tribe_id != old_owner_tribe_id
-            and (new_owner_tribe_id or 0) != 0
+            and new_owner_tribe_id != 0
         ):
             description = f"**{old_owner_name}** is een dorp verloren aan **{new_owner_name}** (`{new_owner_tribe_tag}`)!"
             color = discord.Color.red()
-        elif new_owner_tribe_id == tracked_tribe_id and (old_owner_tribe_id or 0) == 0:
+        elif new_owner_tribe_id == tracked_tribe_id and old_owner_tribe_id == 0:
             description = f"**{new_owner_name}** heeft een dorp veroverd van **{old_owner_name}**!"
             color = discord.Color.green()
-        elif new_owner_tribe_id == tracked_tribe_id and (old_owner_tribe_id or 0) != 0:
+        elif new_owner_tribe_id == tracked_tribe_id and old_owner_tribe_id != 0:
             description = f"**{new_owner_name}** heeft een dorp veroverd van **{old_owner_name}** (`{old_owner_tribe_tag}`)!"
             color = discord.Color.green()
-        else:
-            return
 
         timezone = pytz.timezone("Europe/Amsterdam")
         local_dt = datetime.utcfromtimestamp(unix_timestamp).replace(tzinfo=pytz.utc).astimezone(timezone)
@@ -398,7 +423,7 @@ class ConquerTracker(commands.Cog):
         )
         embed.add_field(
             name="Punten",
-            value=f"```{points}```",
+            value=f"```{str(village['points'])}```",
             inline=True
         )
         embed.set_footer(text=f"Tijdstip: {local_time}")
@@ -407,8 +432,9 @@ class ConquerTracker(commands.Cog):
         if channel:
             try:
                 await channel.send(embed=embed)
-                await asyncio.sleep(1)
-            except (discord.Forbidden, discord.HTTPException):
+            except discord.Forbidden:
+                return
+            except discord.HTTPException:
                 return
 
         await self.bot.db.execute("""
