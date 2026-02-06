@@ -22,14 +22,14 @@ class CasualRangesCog(commands.Cog):
     async def fetch_accounts(self, world: str):
         """Fetch active accounts on the selected world."""
         conn = await self.get_database_connection()
-        query = "SELECT name FROM player_data WHERE world = $1"
+        query = "SELECT name FROM player_data_v3 WHERE world = $1"
         return await conn.fetch(query, world)
 
     async def fetch_players_in_range(self, world: str, account_name: str, percentage: int):
         """Fetch players within the given points range."""
         conn = await self.get_database_connection()
         player_query = """
-            SELECT points FROM player_data 
+            SELECT points FROM player_data_v3 
             WHERE world = $1 AND name = $2
         """
         player = await conn.fetchrow(player_query, world, account_name)
@@ -41,7 +41,7 @@ class CasualRangesCog(commands.Cog):
         max_points = round(points * (1 + (percentage / 100)))
 
         range_query = """
-            SELECT name, points FROM player_data 
+            SELECT name, points FROM player_data_v3 
             WHERE world = $1 AND points BETWEEN $2 AND $3 AND name != $4
             ORDER BY points DESC
         """
