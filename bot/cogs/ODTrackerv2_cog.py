@@ -85,7 +85,7 @@ class ODTracker(commands.Cog):
 
     @tasks.loop(hours=24)
     async def cleanup_odtracker(self):
-        """Verwijder spelers uit odtracker_data_v2 die niet meer bestaan in player_data."""
+        """Verwijder spelers uit odtracker_data_v2 die niet meer bestaan in player_data_v3."""
         async with self.db.acquire() as conn:
             rows = await conn.fetch("SELECT world FROM odtracker_configs_v2")
             for row in rows:
@@ -93,7 +93,7 @@ class ODTracker(commands.Cog):
 
                 try:
                     player_ids = await conn.fetch("""
-                        SELECT player_id FROM player_data
+                        SELECT player_id FROM player_data_v3
                         WHERE world = $1
                     """, world)
                     existing_ids = {r["player_id"] for r in player_ids}
@@ -202,14 +202,14 @@ class ODTracker(commands.Cog):
 
     async def notify_increase(self, conn, world, player_id, increases):
         player = await conn.fetchrow("""
-            SELECT name, tribe_id FROM player_data
+            SELECT name, tribe_id FROM player_data_v3
             WHERE world = $1 AND player_id = $2
         """, world, player_id)
         if not player:
             return
 
         tribe = await conn.fetchrow("""
-            SELECT tag FROM ally_data
+            SELECT tag FROM ally_data_v3
             WHERE world = $1 AND tribe_id = $2
         """, world, player['tribe_id'])
         tribe_tag = tribe['tag'] if tribe else None
