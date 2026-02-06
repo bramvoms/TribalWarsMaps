@@ -246,7 +246,6 @@ class ConquerTrackerV3(commands.Cog):
     
         for world in worlds:
             try:
-                # --- huidige werelddata ---
                 current = await self._fetch_current_villages_world(world)
                 logger.info(
                     "[ConquerTrackerV3 %s] current villages=%s",
@@ -257,7 +256,6 @@ class ConquerTrackerV3(commands.Cog):
                 if not current:
                     continue
     
-                # --- baseline check ---
                 baseline_exists = await self._world_has_baseline(world)
                 logger.info(
                     "[ConquerTrackerV3 %s] baseline_exists=%s",
@@ -273,7 +271,6 @@ class ConquerTrackerV3(commands.Cog):
                     )
                     continue
     
-                # --- vorige owners laden ---
                 t0 = datetime.utcnow()
                 lastowners = await self._load_lastowners_for_world(world)
                 logger.info(
@@ -294,17 +291,25 @@ class ConquerTrackerV3(commands.Cog):
                     world,
                 )
     
-                # --- conquer detectie ---
-                for village_id, cur in current.items():
-                    prev = lastowners.get(village_id)
-                    if not prev:
-                        continue
+                changed_lastowners: Dict[int, Tuple[int, int]] = {}
     
+                for village_id, cur in current.items():
                     new_owner_id = int(cur["player_id"])
                     new_owner_tribe_id = int(cur["tribe_id"])
                     points = int(cur["points"])
     
+                    prev = lastowners.get(village_id)
+                    if not prev:
+                        changed_lastowners[village_id] = (new_owner_id, new_owner_tribe_id)
+                        continue
+    
                     old_owner_id, old_owner_tribe_id = prev
+    
+                    if new_owner_id == old_owner_id and new_owner_tribe_id == old_owner_tribe_id:
+                        continue
+    
+                    changed_lastowners[village_id] = (new_owner_id, new_owner_tribe_id)
+    
                     if new_owner_id == old_owner_id:
                         continue
     
@@ -339,19 +344,17 @@ class ConquerTrackerV3(commands.Cog):
                             old_owner_id=old_owner_id,
                         )
     
-                # --- baseline update in bulk ---
                 t1 = datetime.utcnow()
-                lastowners_update = {
-                    vid: (int(cur["player_id"]), int(cur["tribe_id"]))
-                    for vid, cur in current.items()
-                }
-                await self._upsert_lastowners_for_world(world, lastowners_update)
-                logger.info(
-                    "[ConquerTrackerV3 %s] baseline updated (%s villages) in %.2fs",
-                    world.upper(),
-                    len(lastowners_update),
-                    (datetime.utcnow() - t1).total_seconds(),
-                )
+                if changed_lastowners:
+                    await self._upsert_lastowners_for_world(world, changed_lastowners)
+                    logger.info(
+                        "[ConquerTrackerV3 %s] lastowners updated (%s villages) in %.2fs",
+                        world.upper(),
+                        len(changed_lastowners),
+                        (datetime.utcnow() - t1).total_seconds(),
+                    )
+                else:
+                    logger.info("[ConquerTrackerV3 %s] lastowners updated (0 villages)", world.upper())
     
                 logger.info("[ConquerTrackerV3 %s] scan completed", world.upper())
     
