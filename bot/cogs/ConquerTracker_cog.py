@@ -221,6 +221,12 @@ class ConquerTracker(commands.Cog):
         for world in worlds:
             try:
                 since = await self._get_since_for_world(world)
+                
+                now_ts = int(datetime.utcnow().timestamp())
+                min_since = now_ts - 84600
+                if since < min_since:
+                    since = min_since
+                
                 url = f"https://{world}.tribalwars.nl/interface.php?func=get_conquer_extended&since={since}"
 
                 try:
