@@ -12,7 +12,6 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-
 class ConquerTracker(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
