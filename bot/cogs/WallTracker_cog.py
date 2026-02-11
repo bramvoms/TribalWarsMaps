@@ -88,7 +88,7 @@ class WallTracker(commands.Cog):
                     prev_points = world_cache.get(village_id)
 
                     if prev_points is not None and prev_points - points == 256:
-                        await self.notify_wall_breakdown(world, village_id, name, x, y, player_id)
+                        await self.notify_wall_breakdown(world, village_id, name, x, y, player_id, points)
 
                     world_cache[village_id] = points
 
@@ -108,7 +108,8 @@ class WallTracker(commands.Cog):
         name: str,
         x: int,
         y: int,
-        player_id: int
+        player_id: int,
+        points: int
     ) -> None:
         """Send a notification about a confirmed wall breakdown."""
         rows = await self.db.fetch("""
