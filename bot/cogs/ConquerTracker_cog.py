@@ -457,12 +457,17 @@ class ConquerTracker(commands.Cog):
         embed = discord.Embed(description=description, color=color)
         embed.add_field(
             name="Dorp",
-            value=village_link,
+            value=f"```{village['name']} ({village['x']}|{village['y']})```",
             inline=True
         )
         embed.add_field(
             name="Punten",
             value=f"```{str(village['points'])}```",
+            inline=True
+        )
+        embed.add_field(
+            name="Link",
+            value=f"[Dorp bekijken](https://{world}.tribalwars.nl/game.php?screen=info_village&id={village_id})",
             inline=True
         )
         embed.set_footer(text=f"Tijdstip: {local_time}")
