@@ -130,6 +130,8 @@ class AcademyTracker(commands.Cog):
                 embed.color = discord.Color.red()
                 embed.add_field(name="Dorp", value=f"```{village_name} ({x}|{y})```", inline=True)
                 embed.add_field(name="Eigenaar", value=f"```{owner_name}```", inline=True)
+                village_link = f"https://{world}.tribalwars.nl/game.php?screen=info_village&id={village_id}"
+                embed.add_field(name="Link", value=f"[Dorp bekijken]({village_link})", inline=True)
                 embed.set_thumbnail(url="https://dsnl.innogamescdn.com/asset/415a0ab7/graphic/big_buildings/snob1.png")
 
                 try:
