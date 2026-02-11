@@ -128,7 +128,7 @@ class AcademyTracker(commands.Cog):
         for row in rows:
             channel = self.bot.get_channel(row["channel_id"])
             if channel:
-                embed = create_embed(description=f"{player_link} heeft een adelshoeve gebouwd")
+                embed = create_embed(description=f"{player_link} heeft een adelshoeve afgebroken")
                 embed.color = discord.Color.red()
                 embed.add_field(name="Dorp", value=f"```{village_name} ({x}|{y})```", inline=True)
                 embed.add_field(name="Punten", value=f"```{points}```", inline=True)
