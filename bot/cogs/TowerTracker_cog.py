@@ -138,8 +138,9 @@ class TowerTracker(commands.Cog):
         for row in rows:
             channel = self.bot.get_channel(row["channel_id"])
             if channel:
-                title = f"Uitkijktoren gebouwd op {world.upper()}"
+                title = f"Uitkijktoren gebouwd door {owner_name}"
                 embed = create_embed(title=title, description=None)
+                embed.color = discord.Color.green()
                 embed.add_field(name="Dorp", value=f"```{village_name} ({x}|{y})```", inline=True)
                 embed.add_field(name="Eigenaar", value=f"```{owner_name}```", inline=True)
                 embed.add_field(name="Uitkijktoren level", value=f"```{level}```", inline=True)
