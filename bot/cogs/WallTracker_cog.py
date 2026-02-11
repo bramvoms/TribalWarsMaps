@@ -119,15 +119,16 @@ class WallTracker(commands.Cog):
 
         owner_name = "Barbarendorp" if player_id == 0 else await self.get_player_name(world, player_id)
         village_name = self.decode_url(name)
+        player_link = f"[{owner_name}](https://{world}.tribalwars.nl/game.php?screen=info_player&id={player_id})" if player_id != 0 else owner_name
+        village_link = f"[{village_name} ({x}|{y})](https://{world}.tribalwars.nl/game.php?screen=info_village&id={village_id})"
 
         for row in rows:
             channel = self.bot.get_channel(row["channel_id"])
             if channel:
-                title = f"Muur gesloopt (20>0) van {owner_name}"
-                embed = create_embed(title=title, description=None)
+                description = f"Muur gesloopt (20>0) van {player_link}"
+                embed = create_embed(description=description)
                 embed.color = discord.Color.red()
-                embed.add_field(name="Dorp", value=f"```{village_name} ({x}|{y})```", inline=True)
-                embed.add_field(name="Eigenaar", value=f"```{owner_name}```", inline=True)
+                embed.add_field(name="Dorp", value=village_link, inline=True)
                 embed.set_thumbnail(url="https://dsnl.innogamescdn.com/asset/415a0ab7/graphic/big_buildings/wall3.png")
 
                 try:
