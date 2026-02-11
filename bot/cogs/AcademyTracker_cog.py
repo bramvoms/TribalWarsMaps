@@ -90,7 +90,7 @@ class AcademyTracker(commands.Cog):
 
                     if prev_points is not None and prev_points - points == 512:
                         await self.notify_academy_construction(
-                            world, village_id, name, x, y, player_id
+                            world, village_id, name, x, y, player_id, points
                         )
 
                     cache[village_id] = points
@@ -111,7 +111,8 @@ class AcademyTracker(commands.Cog):
         name: str,
         x: int,
         y: int,
-        player_id: int
+        player_id: int,
+        points: int
     ) -> None:
         rows = await self.db.fetch("""
             SELECT channel_id
