@@ -123,8 +123,9 @@ class WallTracker(commands.Cog):
         for row in rows:
             channel = self.bot.get_channel(row["channel_id"])
             if channel:
-                title = f"Muur gesloopt (20>0) op {world.upper()}"
+                title = f"Muur gesloopt (20>0) van {owner_name}"
                 embed = create_embed(title=title, description=None)
+                embed.color = discord.Color.red()
                 embed.add_field(name="Dorp", value=f"```{village_name} ({x}|{y})```", inline=True)
                 embed.add_field(name="Eigenaar", value=f"```{owner_name}```", inline=True)
                 embed.set_thumbnail(url="https://dsnl.innogamescdn.com/asset/415a0ab7/graphic/big_buildings/wall3.png")
