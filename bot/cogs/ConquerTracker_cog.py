@@ -399,6 +399,9 @@ class ConquerTracker(commands.Cog):
 
         new_owner_name = new_owner["name"] if new_owner else "Onbekend"
         old_owner_name = old_owner["name"] if old_owner else "Barbarendorp"
+        new_owner_link = f"[{new_owner_name}](https://{world}.tribalwars.nl/game.php?screen=info_player&id={new_owner_id})"
+        old_owner_link = f"[{old_owner_name}](https://{world}.tribalwars.nl/game.php?screen=info_player&id={old_owner_id})"
+        village_link = f"[{village['name']} ({village['x']}|{village['y']})](https://{world}.tribalwars.nl/game.php?screen=info_village&id={village_id})"
 
         exists = await self.db.fetchval("""
             SELECT 1
@@ -414,37 +417,37 @@ class ConquerTracker(commands.Cog):
         description = ""
 
         if new_owner_tribe_id == tracked_tribe_id and old_owner_id == 0:
-            description = f"**{new_owner_name}** heeft een barbarendorp veroverd!"
+            description = f"{new_owner_link} heeft een barbarendorp veroverd!"
             color = discord.Color.green()
         elif (
             new_owner_tribe_id == tracked_tribe_id
             and new_owner_tribe_id == old_owner_tribe_id
             and new_owner_id != old_owner_id
         ):
-            description = f"**{new_owner_name}** heeft een dorp veroverd van zijn of haar stamgenoot **{old_owner_name}**!"
+            description = f"{new_owner_link} heeft een dorp veroverd van zijn of haar stamgenoot {old_owner_link}!"
             color = discord.Color.yellow()
         elif new_owner_tribe_id == tracked_tribe_id and new_owner_id == old_owner_id:
-            description = f"**{new_owner_name}** heeft zichzelf veroverd!"
+            description = f"{new_owner_link} heeft zichzelf veroverd!"
             color = discord.Color.yellow()
         elif (
             old_owner_tribe_id == tracked_tribe_id
             and new_owner_tribe_id != old_owner_tribe_id
             and new_owner_tribe_id == 0
         ):
-            description = f"**{old_owner_name}** is een dorp verloren aan **{new_owner_name}**!"
+            description = f"{old_owner_link} is een dorp verloren aan {new_owner_link}!"
             color = discord.Color.red()
         elif (
             old_owner_tribe_id == tracked_tribe_id
             and new_owner_tribe_id != old_owner_tribe_id
             and new_owner_tribe_id != 0
         ):
-            description = f"**{old_owner_name}** is een dorp verloren aan **{new_owner_name}** (`{new_owner_tribe_tag}`)!"
+            description = f"{old_owner_link} is een dorp verloren aan {new_owner_link} (`{new_owner_tribe_tag}`)!"
             color = discord.Color.red()
         elif new_owner_tribe_id == tracked_tribe_id and old_owner_tribe_id == 0:
-            description = f"**{new_owner_name}** heeft een dorp veroverd van **{old_owner_name}**!"
+            description = f"{new_owner_link} heeft een dorp veroverd van {old_owner_link}!"
             color = discord.Color.green()
         elif new_owner_tribe_id == tracked_tribe_id and old_owner_tribe_id != 0:
-            description = f"**{new_owner_name}** heeft een dorp veroverd van **{old_owner_name}** (`{old_owner_tribe_tag}`)!"
+            description = f"{new_owner_link} heeft een dorp veroverd van {old_owner_link} (`{old_owner_tribe_tag}`)!"
             color = discord.Color.green()
 
         timezone = pytz.timezone("Europe/Amsterdam")
@@ -454,7 +457,7 @@ class ConquerTracker(commands.Cog):
         embed = discord.Embed(description=description, color=color)
         embed.add_field(
             name="Dorp",
-            value=f"```{village['name']} ({village['x']}|{village['y']})```",
+            value=village_link,
             inline=True
         )
         embed.add_field(
