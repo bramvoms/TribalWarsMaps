@@ -135,16 +135,16 @@ class TowerTracker(commands.Cog):
         owner_name = "Barbarendorp" if player_id == 0 else await self.get_player_name(world, player_id)
         village_name = self.decode_url(name)
         player_link = f"[{owner_name}](https://{world}.tribalwars.nl/game.php?screen=info_player&id={player_id})" if player_id != 0 else owner_name
-        village_link = f"[{village_name} ({x}|{y})](https://{world}.tribalwars.nl/game.php?screen=info_village&id={village_id})"
+        village_link = f"https://{world}.tribalwars.nl/game.php?screen=info_village&id={village_id}"
 
         for row in rows:
             channel = self.bot.get_channel(row["channel_id"])
             if channel:
-                description = f"Uitkijktoren gebouwd door {player_link}"
-                embed = create_embed(description=description)
+                embed = create_embed(description=f"{player_link} heeft een uitkijktoren gebouwd")
                 embed.color = discord.Color.green()
-                embed.add_field(name="Dorp", value=village_link, inline=True)
+                embed.add_field(name="Dorp", value=f"```{village_name} ({x}|{y})```", inline=True)
                 embed.add_field(name="Uitkijktoren level", value=f"```{level}```", inline=True)
+                embed.add_field(name="Link", value=f"[Dorp bekijken]({village_link})", inline=True)
                 embed.set_thumbnail(url="https://dsnl.innogamescdn.com/asset/415a0ab7/graphic/big_buildings/watchtower3.png")
 
                 try:
