@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 class WallTracker(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.db: asyncpg.Pool = bot.db  
+        self.db: asyncpg.Pool = bot.db
         self.tracked_worlds: set[str] = set()
         self.previous_village_points: dict[str, dict[int, int]] = {}
         self.session: Optional[aiohttp.ClientSession] = None
@@ -120,13 +120,21 @@ class WallTracker(commands.Cog):
 
         owner_name = "Barbarendorp" if player_id == 0 else await self.get_player_name(world, player_id)
         village_name = self.decode_url(name)
-        player_link = f"[{owner_name}](https://{world}.tribalwars.nl/game.php?screen=info_player&id={player_id})" if player_id != 0 else owner_name
+        player_link = (
+            f"[{owner_name}](https://{world}.tribalwars.nl/game.php?screen=info_player&id={player_id})"
+            if player_id != 0 else owner_name
+        )
         village_link = f"https://{world}.tribalwars.nl/game.php?screen=info_village&id={village_id}"
+
+        if player_id == 0:
+            description = "Barbarendorp is gecleard (Muur 20>0)"
+        else:
+            description = f"Dorp van {player_link} is gecleard (Muur 20>0)"
 
         for row in rows:
             channel = self.bot.get_channel(row["channel_id"])
             if channel:
-                embed = create_embed(description=f"Een dorp van {player_link} is gecleard (Muur 20>0)")
+                embed = create_embed(description=description)
                 embed.color = discord.Color.red()
                 embed.add_field(name="Dorp", value=f"```{village_name} ({x}|{y})```", inline=True)
                 embed.add_field(name="Punten", value=f"```{points}```", inline=True)
@@ -137,9 +145,9 @@ class WallTracker(commands.Cog):
                     await channel.send(embed=embed)
                 except discord.Forbidden:
                     continue
-                except discord.HTTPException as e:
+                except discord.HTTPException:
                     continue
-                    
+
     async def get_player_name(self, world: str, player_id: int) -> str:
         """Fetch the player name for a given player ID."""
         result = await self.db.fetchrow("""
