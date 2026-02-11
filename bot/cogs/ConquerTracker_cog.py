@@ -424,7 +424,7 @@ class ConquerTracker(commands.Cog):
             and new_owner_tribe_id == old_owner_tribe_id
             and new_owner_id != old_owner_id
         ):
-            description = f"{new_owner_link} heeft een dorp veroverd van zijn of haar stamgenoot {old_owner_link}!"
+            description = f"{new_owner_link} heeft een dorp veroverd van zijn/haar stamgenoot {old_owner_link}!"
             color = discord.Color.yellow()
         elif new_owner_tribe_id == tracked_tribe_id and new_owner_id == old_owner_id:
             description = f"{new_owner_link} heeft zichzelf veroverd!"
