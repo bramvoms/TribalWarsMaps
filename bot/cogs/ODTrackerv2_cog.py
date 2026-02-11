@@ -207,6 +207,8 @@ class ODTracker(commands.Cog):
         """, world, player_id)
         if not player:
             return
+            
+        player_link = f"[{player['name']}](https://{world}.tribalwars.nl/game.php?screen=info_player&id={player_id})"
 
         tribe = await conn.fetchrow("""
             SELECT tag FROM ally_data_v3
@@ -238,9 +240,9 @@ class ODTracker(commands.Cog):
                 new_val = data["new"]
 
                 if tribe_tag:
-                    description = f"**{kill_type}** van **{player['name']}** ({tribe_tag}) is gestegen"
+                    description = f"**{kill_type}** van {player_link} ({tribe_tag}) is gestegen"
                 else:
-                    description = f"**{kill_type}** van **{player['name']}** is gestegen"
+                    description = f"**{kill_type}** van {player_link} is gestegen"
 
                 embed = create_embed(description=description)
                 embed.color = discord.Color.green()
