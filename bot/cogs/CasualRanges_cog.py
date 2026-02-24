@@ -86,7 +86,9 @@ class CasualRangesCog(commands.Cog):
         worlds = await self.fetch_worlds()
         return [
             app_commands.Choice(name=w["world"], value=w["world"]) 
-            for w in worlds if current.lower() in w["world"].lower()
+            for w in worlds
+            if w["world"].lower().startswith("nlp")
+            and current.lower() in w["world"].lower()
         ][:25]
 
     @casualrange_command.autocomplete("account")
