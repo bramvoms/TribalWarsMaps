@@ -144,34 +144,22 @@ class ODTracker(commands.Cog):
     async def update_od_database(self, world, results):
         async with self.db.acquire() as conn:
             for player_id, data in results.items():
-            previous = await conn.fetchrow("""
-                SELECT kill_att, kill_def, kill_sup, cooldown_att, cooldown_def, cooldown_sup
-                FROM odtracker_data_v2
-                WHERE world = $1 AND player_id = $2
-            """, world, player_id)
-            
-            # Eerste keer speler zien → alleen opslaan, geen melding
-            if previous is None:
-                await conn.execute("""
-                    INSERT INTO odtracker_data_v2 (
-                        world, player_id, kill_att, kill_def, kill_sup,
-                        cooldown_att, cooldown_def, cooldown_sup
-                    )
-                    VALUES ($1, $2, $3, $4, $5, NULL, NULL, NULL)
-                    ON CONFLICT (world, player_id) DO NOTHING
-                """, world, player_id, data.get("kill_att", 0), data.get("kill_def", 0), data.get("kill_sup", 0))
-                continue
-            
-            increases = {}
-            for key in KILL_TYPES:
-                new_val = data.get(key, 0)
-                old_val = previous[key] if previous[key] is not None else 0
-                if new_val > old_val:
-                    increases[key] = {
-                        "delta": new_val - old_val,
-                        "old": old_val,
-                        "new": new_val
-                    }
+                previous = await conn.fetchrow("""
+                    SELECT kill_att, kill_def, kill_sup, cooldown_att, cooldown_def, cooldown_sup
+                    FROM odtracker_data_v2
+                    WHERE world = $1 AND player_id = $2
+                """, world, player_id)
+
+                increases = {}
+                for key in KILL_TYPES:
+                    new_val = data.get(key, 0)
+                    old_val = previous[key] if previous and previous[key] is not None else 0
+                    if new_val > old_val:
+                        increases[key] = {
+                            "delta": new_val - old_val,
+                            "old": old_val,
+                            "new": new_val
+                        }
 
                 if not increases:
                     continue
