@@ -6,6 +6,7 @@ from typing import List, Literal
 from io import BytesIO 
 import logging
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
